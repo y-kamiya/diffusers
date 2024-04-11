@@ -4,34 +4,66 @@ import argparse
 from pathlib import Path
 from diffusers.schedulers import DDIMScheduler
 from examples.community.pipeline_null_text_inversion import NullTextPipeline
+from diffusers import DiffusionPipeline
 import torch
 
 
 CACHE_FILE_NAME = "cache.pt"
 
 
-def main(cfg):
-    scheduler = DDIMScheduler(num_train_timesteps=1000, beta_start=0.00085, beta_end=0.0120, beta_schedule="scaled_linear")
-    pipeline = NullTextPipeline.from_pretrained(
-        cfg.model_path,
-        scheduler=scheduler,
-        torch_dtype=torch.float32,
-    ).to(cfg.device)
-
+def nulltext_inversion(cfg):
     cache_path = cfg.output_dir / CACHE_FILE_NAME
     if cache_path.exists():
         cache = torch.load(cache_path)
         inverted_latent = cache["latent"]
         uncond_embeddings = cache["embeddings"]
     else:
+        scheduler = DDIMScheduler(num_train_timesteps=1000, beta_start=0.00085, beta_end=0.0120, beta_schedule="scaled_linear")
+        pipeline = NullTextPipeline.from_pretrained(
+            cfg.model_path,
+            scheduler=scheduler,
+            torch_dtype=torch.float32,
+        ).to(cfg.device)
+
         inverted_latent, uncond_embeddings = pipeline.invert(str(cfg.image_path), cfg.prompt, num_inner_steps=10, early_stop_epsilon=1e-5, num_inference_steps=cfg.n_steps)
         torch.save({
             "latent": inverted_latent,
             "embeddings": uncond_embeddings,
         }, cache_path)
 
-    result = pipeline(cfg.prompt, uncond_embeddings, inverted_latent, guidance_scale=cfg.guidance_scale, num_inference_steps=cfg.n_steps)
-    result.images[0].save(cfg.output_dir / "inverted.png")
+    if not cfg.skip_reconstruct:
+        result = pipeline(cfg.prompt, uncond_embeddings, inverted_latent, guidance_scale=cfg.guidance_scale, num_inference_steps=cfg.n_steps)
+        result.images[0].save(cfg.output_dir / "inverted.png")
+
+    return inverted_latent, uncond_embeddings
+
+
+def main(cfg):
+    p2p_pipe = DiffusionPipeline.from_pretrained(
+        cfg.model_path,
+        custom_pipeline="pipeline_prompt2prompt",
+    ).to(cfg.device)
+
+    prompts = ["A turtle playing with a ball",
+               "A monkey playing with a ball"]
+
+    cross_attention_kwargs = {
+        "edit_type": "replace",
+        "cross_replace_steps": 0.4,
+        "self_replace_steps": 0.4
+    }
+
+    inverted_latent, uncond_embeddings = nulltext_inversion(cfg)
+    result = p2p_pipe(
+        prompt=prompts,
+        latents=inverted_latent,
+        negative_prompt_embeds=uncond_embeddings,
+        height=512,
+        width=512,
+        num_inference_steps=cfg.n_steps,
+        cross_attention_kwargs=cross_attention_kwargs
+    )
+    result.images[0].save(cfg.output_dir / "edited.png")
 
 
 if __name__ == "__main__":
