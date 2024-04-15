@@ -3,10 +3,10 @@ import os
 import argparse
 from pathlib import Path
 from diffusers.schedulers import DDIMScheduler
-from examples.community.pipeline_null_text_inversion import NullTextPipeline
 from diffusers import DiffusionPipeline
 import torch
 
+from experiments.nullinversion.pipeline import NullTextPipeline
 from experiments import utils
 
 
