@@ -7,8 +7,15 @@ from examples.community.pipeline_null_text_inversion import NullTextPipeline
 from diffusers import DiffusionPipeline
 import torch
 
+from experiments import utils
+
 
 CACHE_FILE_NAME = "cache.pt"
+
+scheduler = DDIMScheduler(num_train_timesteps=1000, beta_start=0.00085, beta_end=0.0120, beta_schedule="scaled_linear", clip_sample=False, steps_offset=1)
+
+prompts = ["a girl, pink hair, blue eyes, red ribbon",
+           "a girl, pink hair, blue eyes, black ribbon"]
 
 
 def nulltext_inversion(cfg):
@@ -18,13 +25,13 @@ def nulltext_inversion(cfg):
         inverted_latent = cache["latent"]
         uncond_embeddings = cache["embeddings"]
     else:
-        scheduler = DDIMScheduler(num_train_timesteps=1000, beta_start=0.00085, beta_end=0.0120, beta_schedule="scaled_linear")
         pipeline = NullTextPipeline.from_pretrained(
             cfg.model_path,
             scheduler=scheduler,
             torch_dtype=torch.float32,
         ).to(cfg.device)
 
+        cfg.prompt = prompts[0]
         inverted_latent, uncond_embeddings = pipeline.invert(str(cfg.image_path), cfg.prompt, num_inner_steps=10, early_stop_epsilon=1e-5, num_inference_steps=cfg.n_steps)
         torch.save({
             "latent": inverted_latent,
@@ -45,33 +52,41 @@ def main(cfg):
     #     return
     # prompts = [cfg.prompt, cfg.edit_prompt]
 
-    prompts = ["a girl, pink hair, blue eyes, red ribbon",
-               "a girl, black hair, blue eyes, red ribbon"]
+    (cfg.output_dir / "prompts.txt").write_text("\n".join(prompts))
 
     p2p_pipe = DiffusionPipeline.from_pretrained(
         cfg.model_path,
-        custom_pipeline="pipeline_prompt2prompt",
+        custom_pipeline="./experiments/p2p/",
+        scheduler=scheduler,
+        safety_checker=None,
+        requires_safety_checker=False,
     ).to(cfg.device)
 
     cross_attention_kwargs = {
         "edit_type": "replace",
-        "cross_replace_steps": 0.8,
+        "cross_replace_steps": 0.4,
         "self_replace_steps": 0.4,
-        "local_blend_words": ["pink ", "black"],
+        "local_blend_words": ["red ", "black"],
     }
+    resolution = 512
     generator = torch.Generator(device=cfg.device).manual_seed(cfg.seed)
 
     result = p2p_pipe(
         prompt=prompts,
-        latents=inverted_latent,
-        negative_prompt_embeds=uncond_embeddings,
-        height=512,
-        width=512,
+        latents=inverted_latent.repeat(len(prompts), 1, 1, 1),
+        negative_prompt_embeds_by_timesteps=uncond_embeddings,
+        height=resolution,
+        width=resolution,
         num_inference_steps=cfg.n_steps,
         generator=generator,
+        output_type="np",
         cross_attention_kwargs=cross_attention_kwargs
     )
-    result.images[0].save(cfg.output_dir / "edited.png")
+    img = utils.create_tiled_image(result.images * 255)
+    img.save(cfg.output_dir / "edited.png")
+
+    utils.show_cross_attention(p2p_pipe, prompts, res=resolution//16, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
+    utils.show_cross_attention(p2p_pipe, prompts, res=resolution//32, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
 
 
 if __name__ == "__main__":

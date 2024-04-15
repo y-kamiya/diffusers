@@ -567,6 +567,7 @@ class Prompt2PromptPipeline(
         latents: Optional[torch.FloatTensor] = None,
         prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_prompt_embeds: Optional[torch.FloatTensor] = None,
+        negative_prompt_embeds_by_timesteps: Optional[torch.FloatTensor] = None,
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
@@ -722,6 +723,8 @@ class Prompt2PromptPipeline(
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 # predict the noise residual
+                if negative_prompt_embeds_by_timesteps is not None:
+                    prompt_embeds[:batch_size] = negative_prompt_embeds_by_timesteps[i]
                 noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=prompt_embeds).sample
 
                 # perform guidance
