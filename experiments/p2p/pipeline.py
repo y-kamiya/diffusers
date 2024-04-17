@@ -842,6 +842,14 @@ class P2PCrossAttnProcessor:
         return hidden_states
 
 
+def convert_layer_ids(ids):
+    if ids is None:
+        return None
+    x_min = (ids[0] - 1) * 2
+    x_max = ids[-1] * 2 - 1
+    return range(x_min, x_max)
+
+
 def create_controller(
     prompts: List[str],
     cross_attention_kwargs: Dict,
@@ -855,6 +863,7 @@ def create_controller(
     equalizer_strengths = cross_attention_kwargs.get("equalizer_strengths", None)
     n_cross_replace = cross_attention_kwargs.get("n_cross_replace", 0.4)
     n_self_replace = cross_attention_kwargs.get("n_self_replace", 0.4)
+    layer_ids = convert_layer_ids(cross_attention_kwargs.get("layer_ids", None))
 
     # only replace
     if edit_type == "replace" and local_blend_words is None:
@@ -865,6 +874,7 @@ def create_controller(
             n_self_replace,
             tokenizer=tokenizer,
             device=device,
+            layer_ids=layer_ids,
         )
 
     # replace + localblend
@@ -878,6 +888,7 @@ def create_controller(
             lb,
             tokenizer=tokenizer,
             device=device,
+            layer_ids=layer_ids,
         )
 
     # only refine
@@ -1055,16 +1066,16 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
         return x_t
 
     def replace_self_attention(self, attn_base, att_replace):
-        if att_replace.shape[2] <= 16**2:
-            return attn_base.unsqueeze(0).expand(att_replace.shape[0], *attn_base.shape)
-        else:
-            return att_replace
+        return attn_base.unsqueeze(0).expand(att_replace.shape[0], *attn_base.shape)
 
     @abc.abstractmethod
     def replace_cross_attention(self, attn_base, att_replace):
         raise NotImplementedError
 
     def forward(self, attn, is_cross: bool, place_in_unet: str):
+        if self.cur_att_layer not in self.layer_ids:
+            return attn
+
         super(AttentionControlEdit, self).forward(attn, is_cross, place_in_unet)
         # FIXME not replace correctly
         if is_cross or (self.num_self_replace[0] <= self.cur_step < self.num_self_replace[1]):
@@ -1079,6 +1090,8 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
                 )
                 attn[1:] = attn_repalce_new
             else:
+                if self.cur_step == 0:
+                    print(place_in_unet, attn_repalce.shape, self.cur_att_layer)
                 attn[1:] = self.replace_self_attention(attn_base, attn_repalce)
             attn = attn.reshape(self.batch_size * h, *attn.shape[2:])
         return attn
@@ -1092,6 +1105,7 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
         local_blend: Optional[LocalBlend],
         tokenizer,
         device,
+        layer_ids: Optional[list[int]] = None,
     ):
         super(AttentionControlEdit, self).__init__()
         # add tokenizer and device here
@@ -1108,6 +1122,8 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
         self.num_self_replace = int(num_steps * self_replace_steps[0]), int(num_steps * self_replace_steps[1])
         self.local_blend = local_blend  # 在外面定义后传进来
 
+        self.layer_ids = layer_ids if layer_ids is not None else list(range(32))
+
 
 class AttentionReplace(AttentionControlEdit):
     def replace_cross_attention(self, attn_base, att_replace):
@@ -1122,6 +1138,7 @@ class AttentionReplace(AttentionControlEdit):
         local_blend: Optional[LocalBlend] = None,
         tokenizer=None,
         device=None,
+        layer_ids=None,
     ):
         super(AttentionReplace, self).__init__(
             prompts,
@@ -1131,6 +1148,7 @@ class AttentionReplace(AttentionControlEdit):
             local_blend,
             tokenizer,
             device,
+            layer_ids,
         )
         self.mapper = get_replacement_mapper(prompts, self.tokenizer).to(self.device)
 

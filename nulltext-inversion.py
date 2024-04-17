@@ -62,11 +62,14 @@ def main(cfg):
         requires_safety_checker=False,
     ).to(cfg.device)
 
+    layer_ids = range(4, 15)
+
     cross_attention_kwargs = {
         "edit_type": "replace",
-        "n_cross_replace": 0.4,
-        "n_self_replace": 0.4,
+        "n_cross_replace": 0.0,
+        "n_self_replace": 0.8,
         # "local_blend_words": ["red ", "black"],
+        "layer_ids": layer_ids,
     }
     resolution = 512
     generator = torch.Generator(device=cfg.device).manual_seed(cfg.seed)
@@ -85,8 +88,9 @@ def main(cfg):
     img = utils.create_tiled_image(result.images * 255)
     img.save(cfg.output_dir / "edited.png")
 
-    utils.show_cross_attention(p2p_pipe, prompts, res=resolution//16, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
-    utils.show_cross_attention(p2p_pipe, prompts, res=resolution//32, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
+    if layer_ids is None:
+        utils.show_cross_attention(p2p_pipe, prompts, res=resolution//16, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
+        utils.show_cross_attention(p2p_pipe, prompts, res=resolution//32, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
 
 
 if __name__ == "__main__":
