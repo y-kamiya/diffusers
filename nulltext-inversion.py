@@ -64,9 +64,9 @@ def main(cfg):
 
     cross_attention_kwargs = {
         "edit_type": "replace",
-        "cross_replace_steps": 0.4,
-        "self_replace_steps": 0.4,
-        "local_blend_words": ["red ", "black"],
+        "n_cross_replace": 0.4,
+        "n_self_replace": 0.4,
+        # "local_blend_words": ["red ", "black"],
     }
     resolution = 512
     generator = torch.Generator(device=cfg.device).manual_seed(cfg.seed)
