@@ -62,35 +62,38 @@ def main(cfg):
         requires_safety_checker=False,
     ).to(cfg.device)
 
-    layer_ids = range(4, 15)
-
-    cross_attention_kwargs = {
-        "edit_type": "replace",
-        "n_cross_replace": 0.0,
-        "n_self_replace": 0.8,
-        # "local_blend_words": ["red ", "black"],
-        "layer_ids": layer_ids,
-    }
-    resolution = 512
     generator = torch.Generator(device=cfg.device).manual_seed(cfg.seed)
+    resolution = 512
+    layer_min = 4
+    layer_max = 14
+    layer_ids = range(layer_min, layer_max + 1)
 
-    result = p2p_pipe(
-        prompt=prompts,
-        latents=inverted_latent.repeat(len(prompts), 1, 1, 1),
-        negative_prompt_embeds_by_timesteps=uncond_embeddings,
-        height=resolution,
-        width=resolution,
-        num_inference_steps=cfg.n_steps,
-        generator=generator,
-        output_type="np",
-        cross_attention_kwargs=cross_attention_kwargs
-    )
-    img = utils.create_tiled_image(result.images * 255)
-    img.save(cfg.output_dir / "edited.png")
+    for n in range(0, 11):
+        cross_attention_kwargs = {
+            "edit_type": "replace",
+            "n_cross_replace": 0.0,
+            "n_self_replace": n * 0.1,
+            # "local_blend_words": ["red ", "black"],
+            "layer_ids": layer_ids,
+        }
 
-    if layer_ids is None:
-        utils.show_cross_attention(p2p_pipe, prompts, res=resolution//16, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
-        utils.show_cross_attention(p2p_pipe, prompts, res=resolution//32, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
+        result = p2p_pipe(
+            prompt=prompts,
+            latents=inverted_latent.repeat(len(prompts), 1, 1, 1),
+            negative_prompt_embeds_by_timesteps=uncond_embeddings,
+            height=resolution,
+            width=resolution,
+            num_inference_steps=cfg.n_steps,
+            generator=generator,
+            output_type="np",
+            cross_attention_kwargs=cross_attention_kwargs
+        )
+        img = utils.create_tiled_image(result.images * 255)
+        img.save(cfg.output_dir / f"cross00_self{n:02}_layer{layer_min}-{layer_max}.png")
+
+        if layer_ids is None:
+            utils.show_cross_attention(p2p_pipe, prompts, res=resolution//16, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
+            utils.show_cross_attention(p2p_pipe, prompts, res=resolution//32, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
 
 
 if __name__ == "__main__":
