@@ -31,14 +31,14 @@ def nulltext_inversion(cfg):
             torch_dtype=torch.float32,
         ).to(cfg.device)
 
-        cfg.prompt = prompts[0]
-        inverted_latent, uncond_embeddings = pipeline.invert(str(cfg.image_path), cfg.prompt, num_inner_steps=10, early_stop_epsilon=1e-5, num_inference_steps=cfg.n_steps)
+        base_prompt = prompts[0]
+        inverted_latent, uncond_embeddings = pipeline.invert(str(cfg.image_path), base_prompt, num_inner_steps=10, early_stop_epsilon=1e-5, num_inference_steps=cfg.n_steps)
         torch.save({
             "latent": inverted_latent,
             "embeddings": uncond_embeddings,
         }, cache_path)
 
-        result = pipeline(cfg.prompt, uncond_embeddings, inverted_latent, guidance_scale=cfg.guidance_scale, num_inference_steps=cfg.n_steps)
+        result = pipeline(base_prompt, uncond_embeddings, inverted_latent, guidance_scale=cfg.guidance_scale, num_inference_steps=cfg.n_steps)
         result.images[0].save(cfg.output_dir / "inverted.png")
 
     return inverted_latent, uncond_embeddings
@@ -47,17 +47,13 @@ def nulltext_inversion(cfg):
 def main(cfg):
     inverted_latent, uncond_embeddings = nulltext_inversion(cfg)
 
-    # if cfg.edit_prompt is None:
-    #     print("No edit prompt provided, skipping editing")
-    #     return
-    # prompts = [cfg.prompt, cfg.edit_prompt]
-
     (cfg.output_dir / "prompts.txt").write_text("\n".join(prompts))
 
     p2p_pipe = DiffusionPipeline.from_pretrained(
         cfg.model_path,
         custom_pipeline="./experiments/p2p/",
         scheduler=scheduler,
+        torch_dtype=torch.float16 if cfg.fp16 else torch.float32,
         safety_checker=None,
         requires_safety_checker=False,
     ).to(cfg.device)
@@ -77,17 +73,18 @@ def main(cfg):
             "layer_ids": layer_ids,
         }
 
-        result = p2p_pipe(
-            prompt=prompts,
-            latents=inverted_latent.repeat(len(prompts), 1, 1, 1),
-            negative_prompt_embeds_by_timesteps=uncond_embeddings,
-            height=resolution,
-            width=resolution,
-            num_inference_steps=cfg.n_steps,
-            generator=generator,
-            output_type="np",
-            cross_attention_kwargs=cross_attention_kwargs
-        )
+        with torch.autocast(device_type=cfg.device_name, dtype=torch.float16, enabled=cfg.fp16):
+            result = p2p_pipe(
+                prompt=prompts,
+                latents=inverted_latent.repeat(len(prompts), 1, 1, 1),
+                negative_prompt_embeds_by_timesteps=uncond_embeddings,
+                height=resolution,
+                width=resolution,
+                num_inference_steps=cfg.n_steps,
+                generator=generator,
+                output_type="np",
+                cross_attention_kwargs=cross_attention_kwargs
+            )
         img = utils.create_tiled_image(result.images * 255)
         img.save(cfg.output_dir / f"cross00_self{n:02}_layer{layer_min}-{layer_max}.png")
 
@@ -99,14 +96,13 @@ def main(cfg):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("image_path", type=Path)
-    parser.add_argument("--prompt")
-    parser.add_argument("--edit_prompt", default=None)
     parser.add_argument("--cpu", action="store_true", help="use cpu")
     parser.add_argument("--model_path", default="runwayml/stable-diffusion-v1-5")
     parser.add_argument("--n_steps", type=int, default=50)
     parser.add_argument("--guidance_scale", type=float, default=7.5)
     parser.add_argument("--seed", type=int, default=8888)
     parser.add_argument("--output_dir", type=Path, default="./output")
+    parser.add_argument("--fp16", action="store_true")
     args = parser.parse_args()
 
     args.device_name = "cpu" if args.cpu else "cuda"
@@ -115,4 +111,5 @@ if __name__ == "__main__":
     args.output_dir = args.output_dir / args.image_path.stem
     os.makedirs(args.output_dir, exist_ok=True)
 
+    print(args)
     main(args)
