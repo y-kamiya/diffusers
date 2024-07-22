@@ -1090,8 +1090,8 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
                 )
                 attn[1:] = attn_repalce_new
             else:
-                if self.cur_step == 0:
-                    print(place_in_unet, attn_repalce.shape, self.cur_att_layer)
+                # if self.cur_step == 0:
+                #     print(place_in_unet, attn_repalce.shape, self.cur_att_layer)
                 attn[1:] = self.replace_self_attention(attn_base, attn_repalce)
             attn = attn.reshape(self.batch_size * h, *attn.shape[2:])
         return attn

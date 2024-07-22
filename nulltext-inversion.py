@@ -44,8 +44,28 @@ def nulltext_inversion(cfg):
     return inverted_latent, uncond_embeddings
 
 
+def ddim_inversion(cfg):
+    pipeline = NullTextPipeline.from_pretrained(
+        cfg.model_path,
+        scheduler=scheduler,
+        torch_dtype=torch.float32,
+    ).to(cfg.device)
+
+    base_prompt = prompts[0]
+    inverted_latents, uncond_embeddings = pipeline.ddim_inversion(str(cfg.image_path), base_prompt, num_inference_steps=cfg.n_steps)
+
+    inverted_latent = inverted_latents[-1]
+    result = pipeline(base_prompt, uncond_embeddings, inverted_latent, start_step=0, guidance_scale=cfg.guidance_scale, num_inference_steps=cfg.n_steps)
+    result.images[0].save(cfg.output_dir / f"inverted_ddim.png")
+
+    return inverted_latent, uncond_embeddings
+
+
 def main(cfg):
-    inverted_latent, uncond_embeddings = nulltext_inversion(cfg)
+    if cfg.inversion_type == "ddim":
+        inverted_latent, uncond_embeddings = ddim_inversion(cfg)
+    else:
+        inverted_latent, uncond_embeddings = nulltext_inversion(cfg)
 
     (cfg.output_dir / "prompts.txt").write_text("\n".join(prompts))
 
@@ -103,6 +123,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=8888)
     parser.add_argument("--output_dir", type=Path, default="./output")
     parser.add_argument("--fp16", action="store_true")
+    parser.add_argument("--inversion_type", default="ddim", choices=["ddim", "nulltext"])
     args = parser.parse_args()
 
     args.device_name = "cpu" if args.cpu else "cuda"

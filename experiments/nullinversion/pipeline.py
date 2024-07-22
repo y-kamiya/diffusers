@@ -188,6 +188,14 @@ class NullTextPipeline(StableDiffusionPipeline):
         return ddim_latents[-1], uncond_embeddings
 
     @torch.no_grad()
+    def ddim_inversion(self, image_path: str, prompt: str, num_inference_steps=50):
+        self.num_inference_steps = num_inference_steps
+        context = self.get_context(prompt)
+        latent = self.image2latent(image_path)
+        ddim_latents = self.ddim_inversion_loop(latent, context)
+        return ddim_latents, context.chunk(2)[0].unsqueeze(0).repeat(num_inference_steps, 1, 1, 1)
+
+    @torch.no_grad()
     def __call__(
         self,
         prompt,
@@ -203,6 +211,7 @@ class NullTextPipeline(StableDiffusionPipeline):
         prompt_embeds=None,
         negative_prompt_embeds=None,
         output_type="pil",
+        start_step=0,
     ):
         self._guidance_scale = guidance_scale
         # 0. Default height and width to unet
@@ -236,7 +245,7 @@ class NullTextPipeline(StableDiffusionPipeline):
         timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, num_inference_steps, device, timesteps)
         latents = inverted_latent
         with self.progress_bar(total=num_inference_steps) as progress_bar:
-            for i, t in enumerate(timesteps):
+            for i, t in enumerate(timesteps[start_step:]):
                 noise_pred_uncond = self.unet(latents, t, encoder_hidden_states=uncond_embeddings[i])["sample"]
                 noise_pred = self.unet(latents, t, encoder_hidden_states=prompt_embeds)["sample"]
                 noise_pred = noise_pred_uncond + guidance_scale * (noise_pred - noise_pred_uncond)
