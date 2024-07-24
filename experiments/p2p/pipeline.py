@@ -1082,14 +1082,14 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
             h = attn.shape[0] // (self.batch_size)
             attn = attn.reshape(self.batch_size, h, *attn.shape[1:])
             attn_base, attn_repalce = attn[0], attn[1:]
-            if is_cross:
+            if is_cross and self.can_cross_replace:
                 alpha_words = self.cross_replace_alpha[self.cur_step]
                 attn_repalce_new = (
                     self.replace_cross_attention(attn_base, attn_repalce) * alpha_words
                     + (1 - alpha_words) * attn_repalce
                 )
                 attn[1:] = attn_repalce_new
-            else:
+            elif not is_cross:
                 # if self.cur_step == 0:
                 #     print(place_in_unet, attn_repalce.shape, self.cur_att_layer)
                 attn[1:] = self.replace_self_attention(attn_base, attn_repalce)
@@ -1113,6 +1113,7 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
         self.tokenizer = tokenizer
         self.device = device
 
+        self.can_cross_replace = cross_replace_steps > 0
         self.batch_size = len(prompts)
         self.cross_replace_alpha = get_time_words_attention_alpha(
             prompts, num_steps, cross_replace_steps, self.tokenizer
@@ -1127,6 +1128,7 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
 
 class AttentionReplace(AttentionControlEdit):
     def replace_cross_attention(self, attn_base, att_replace):
+        assert self.can_cross_replace, f"n_cross_replace should be set non zero"
         return torch.einsum("hpw,bwn->bhpn", attn_base, self.mapper)
 
     def __init__(
@@ -1150,7 +1152,8 @@ class AttentionReplace(AttentionControlEdit):
             device,
             layer_ids,
         )
-        self.mapper = get_replacement_mapper(prompts, self.tokenizer).to(self.device)
+        if self.can_cross_replace:
+            self.mapper = get_replacement_mapper(prompts, self.tokenizer).to(self.device)
 
 
 class AttentionRefine(AttentionControlEdit):
