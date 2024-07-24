@@ -56,7 +56,7 @@ def ddim_inversion(cfg):
 
     inverted_latent = inverted_latents[-1]
     result = pipeline(base_prompt, uncond_embeddings, inverted_latent, start_step=0, guidance_scale=cfg.guidance_scale, num_inference_steps=cfg.n_steps)
-    result.images[0].save(cfg.output_dir / f"inverted_ddim.png")
+    result.images[0].save(cfg.output_dir / f"inverted.png")
 
     return inverted_latent, uncond_embeddings
 
@@ -67,7 +67,9 @@ def main(cfg):
     else:
         inverted_latent, uncond_embeddings = nulltext_inversion(cfg)
 
-    (cfg.output_dir / "prompts.txt").write_text("\n".join(prompts))
+    output_dir = cfg.output_dir / cfg.output_image_dir_name
+    os.makedirs(output_dir, exist_ok=True)
+    (output_dir / "prompts.txt").write_text("\n".join(prompts))
 
     p2p_pipe = DiffusionPipeline.from_pretrained(
         cfg.model_path,
@@ -106,7 +108,7 @@ def main(cfg):
                 cross_attention_kwargs=cross_attention_kwargs
             )
         img = utils.create_tiled_image(result.images * 255)
-        img.save(cfg.output_dir / f"cross00_self{n:02}_layer{layer_min}-{layer_max}.png")
+        img.save(output_dir / f"cross00_self{n:02}_layer{layer_min}-{layer_max}.png")
 
         if layer_ids is None:
             utils.show_cross_attention(p2p_pipe, prompts, res=resolution//16, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
@@ -122,8 +124,9 @@ if __name__ == "__main__":
     parser.add_argument("--guidance_scale", type=float, default=7.5)
     parser.add_argument("--seed", type=int, default=8888)
     parser.add_argument("--output_dir", type=Path, default="./output")
+    parser.add_argument("--output_image_dir_name", type=Path, default="default")
     parser.add_argument("--fp16", action="store_true")
-    parser.add_argument("--inversion_type", default="ddim", choices=["ddim", "nulltext"])
+    parser.add_argument("--inversion_type", default="nulltext", choices=["ddim", "nulltext"])
     args = parser.parse_args()
 
     args.device_name = "cpu" if args.cpu else "cuda"
