@@ -5,6 +5,7 @@ from pathlib import Path
 from diffusers.schedulers import DDIMScheduler
 from diffusers import DiffusionPipeline
 import torch
+from torchvision.utils import save_image
 
 from experiments.nullinversion.pipeline import NullTextPipeline
 from experiments import utils
@@ -86,7 +87,7 @@ def main(cfg):
     layer_max = 14
     layer_ids = range(layer_min, layer_max + 1)
 
-    for n in range(0, 11):
+    for n in cfg.self_replace:
         cross_attention_kwargs = {
             "edit_type": "replace",
             "n_cross_replace": 0.0,
@@ -94,6 +95,8 @@ def main(cfg):
             # "local_blend_words": ["red ", "black"],
             "layer_ids": layer_ids,
         }
+
+        print(f"generate with self_replace: {n}")
 
         with torch.autocast(device_type=cfg.device_name, dtype=torch.float16, enabled=cfg.fp16):
             result = p2p_pipe(
@@ -104,11 +107,18 @@ def main(cfg):
                 width=resolution,
                 num_inference_steps=cfg.n_steps,
                 generator=generator,
-                output_type="np",
+                output_type="pt",
                 cross_attention_kwargs=cross_attention_kwargs
             )
-        img = utils.create_tiled_image(result.images * 255)
-        img.save(output_dir / f"cross00_self{n:02}_layer{layer_min}-{layer_max}.png")
+
+        name = f"cross00_self{n:02}_layer{layer_min}-{layer_max}"
+        save_image(result.images, output_dir / f"{name}.png")
+
+        if cfg.save_separated:
+            sub_dir = output_dir / name
+            os.makedirs(sub_dir, exist_ok=True)
+            for i, img in enumerate(result.images):
+                save_image(img, sub_dir / f"{i}.png")
 
         if layer_ids is None:
             utils.show_cross_attention(p2p_pipe, prompts, res=resolution//16, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
@@ -127,6 +137,8 @@ if __name__ == "__main__":
     parser.add_argument("--output_image_dir_name", type=Path, default="default")
     parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--inversion_type", default="nulltext", choices=["ddim", "nulltext"])
+    parser.add_argument("--save_separated", action="store_true")
+    parser.add_argument("--self_replace", type=int, nargs="*", default=[3, 4, 5, 6, 7, 8])
     args = parser.parse_args()
 
     args.device_name = "cpu" if args.cpu else "cuda"
