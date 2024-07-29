@@ -87,16 +87,21 @@ def main(cfg):
     layer_max = 14
     layer_ids = range(layer_min, layer_max + 1)
 
-    for n in cfg.self_replace:
-        cross_attention_kwargs = {
-            "edit_type": "replace",
-            "n_cross_replace": 0.0,
-            "n_self_replace": n * 0.1,
-            # "local_blend_words": ["red ", "black"],
-            "layer_ids": layer_ids,
-        }
+    cross_attention_kwargs = {
+        "edit_type": "replace",
+        "n_cross_replace": 0.0,
+        "local_blend_words": [["hair"], ["hair"]],
+        # "local_blend_words": [["long ", "blue"], ["long", "blond"], ["short", "blue"]],
+        "layer_ids": layer_ids,
+    }
 
-        print(f"generate with self_replace: {n}")
+    def generate(n_self_replace, n_lb_threshold):
+        kwargs = cross_attention_kwargs.update({
+            "n_self_replace": n_self_replace * 0.1,
+            "local_blend_threshold": n_lb_threshold * 0.1,
+        })
+
+        print(f"generate with self_replace: {n}, lb_threshold: {n_lb_threshold}")
 
         with torch.autocast(device_type=cfg.device_name, dtype=torch.float16, enabled=cfg.fp16):
             result = p2p_pipe(
@@ -112,6 +117,9 @@ def main(cfg):
             )
 
         name = f"cross00_self{n:02}_layer{layer_min}-{layer_max}"
+        if "local_blend_words" in cross_attention_kwargs:
+            word = cross_attention_kwargs["local_blend_words"][0][0]
+            name += f"_lb-{word}{n_lb_threshold:02}"
         save_image(result.images, output_dir / f"{name}.png")
 
         if cfg.save_separated:
@@ -123,6 +131,11 @@ def main(cfg):
         if layer_ids is None:
             utils.show_cross_attention(p2p_pipe, prompts, res=resolution//16, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
             utils.show_cross_attention(p2p_pipe, prompts, res=resolution//32, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
+
+
+    for n in cfg.self_replaces:
+        for lb_threshold in cfg.lb_thresholds:
+            generate(n, lb_threshold)
 
 
 if __name__ == "__main__":
@@ -138,7 +151,8 @@ if __name__ == "__main__":
     parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--inversion_type", default="nulltext", choices=["ddim", "nulltext"])
     parser.add_argument("--save_separated", action="store_true")
-    parser.add_argument("--self_replace", type=int, nargs="*", default=[3, 4, 5, 6, 7, 8])
+    parser.add_argument("--self_replaces", type=int, nargs="*", default=[3, 4, 5, 6, 7, 8])
+    parser.add_argument("--lb_thresholds", type=int, nargs="*", default=[3])
     args = parser.parse_args()
 
     args.device_name = "cpu" if args.cpu else "cuda"

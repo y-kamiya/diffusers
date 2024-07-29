@@ -859,6 +859,7 @@ def create_controller(
 ) -> AttentionControl:
     edit_type = cross_attention_kwargs.get("edit_type", None)
     local_blend_words = cross_attention_kwargs.get("local_blend_words", None)
+    local_blend_threshold = cross_attention_kwargs.get("local_blend_threshold", None)
     equalizer_words = cross_attention_kwargs.get("equalizer_words", None)
     equalizer_strengths = cross_attention_kwargs.get("equalizer_strengths", None)
     n_cross_replace = cross_attention_kwargs.get("n_cross_replace", 0.4)
@@ -879,7 +880,7 @@ def create_controller(
 
     # replace + localblend
     if edit_type == "replace" and local_blend_words is not None:
-        lb = LocalBlend(prompts, local_blend_words, tokenizer=tokenizer, device=device)
+        lb = LocalBlend(prompts, local_blend_words, tokenizer=tokenizer, device=device, threshold=local_blend_threshold)
         return AttentionReplace(
             prompts,
             num_inference_steps,
@@ -904,7 +905,7 @@ def create_controller(
 
     # refine + localblend
     if edit_type == "refine" and local_blend_words is not None:
-        lb = LocalBlend(prompts, local_blend_words, tokenizer=tokenizer, device=device)
+        lb = LocalBlend(prompts, local_blend_words, tokenizer=tokenizer, device=device, threshold=local_blend_threshold)
         return AttentionRefine(
             prompts,
             num_inference_steps,
@@ -1033,7 +1034,7 @@ class LocalBlend:
         mask = F.interpolate(mask, size=(x_t.shape[2:]))
         mask = mask / mask.max(2, keepdims=True)[0].max(3, keepdims=True)[0]
         mask = mask.gt(self.threshold)
-        mask = (mask[:1] + mask[1:]).float()
+        mask = (mask[:1] + mask).float()
         x_t = x_t[:1] + mask * (x_t - x_t[:1])
         return x_t
 
