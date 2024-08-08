@@ -90,7 +90,7 @@ def main(cfg):
     cross_attention_kwargs = {
         "edit_type": "replace",
         "n_cross_replace": 0.0,
-        "local_blend_words": [["hair"], ["hair"]],
+        "local_blend_words": [["hair,"], ["hair,"]],
         # "local_blend_words": [["long ", "blue"], ["long", "blond"], ["short", "blue"]],
         "layer_ids": layer_ids,
     }
@@ -128,9 +128,9 @@ def main(cfg):
             for i, img in enumerate(result.images):
                 save_image(img, sub_dir / f"{i}.png")
 
-        if layer_ids is None:
-            utils.show_cross_attention(p2p_pipe, prompts, res=resolution//16, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
-            utils.show_cross_attention(p2p_pipe, prompts, res=resolution//32, from_where=("up", "down"), select=0, output_dir=cfg.output_dir)
+        for i in len(prompts):
+            utils.show_cross_attention(p2p_pipe, prompts, res=resolution//16, from_where=("up", "down"), select=i, output_dir=cfg.output_dir)
+            utils.show_cross_attention(p2p_pipe, prompts, res=resolution//32, from_where=("up", "down"), select=i, output_dir=cfg.output_dir)
 
 
     for n in cfg.self_replaces:

@@ -53,6 +53,9 @@ from diffusers.utils import (
 )
 from diffusers.utils.torch_utils import randn_tensor
 
+import os
+from torchvision.utils import save_image
+
 
 logger = logging.get_logger(__name__)
 
@@ -827,12 +830,36 @@ class P2PCrossAttnProcessor:
         value = attn.head_to_batch_dim(value)
 
         attention_probs = attn.get_attention_scores(query, key, attention_mask)
-
-        # one line change
         self.controller(attention_probs, is_cross, self.place_in_unet)
-
         hidden_states = torch.bmm(attention_probs, value)
         hidden_states = attn.batch_to_head_dim(hidden_states)
+        bs = hidden_states.shape[0]
+
+        hw = query.shape[1]
+        res = int(np.sqrt(hw))
+        cross_attn_map = self.controller.get_cross_attention_map((res, res), is_cross)
+        if cross_attn_map is not None:
+            dtype = query.dtype
+            cross_attn_map = cross_attn_map.to(dtype=dtype).view(-1, hw, 1)
+            M_s = cross_attn_map[:1]
+            M_t = cross_attn_map[1:]
+
+            ref_mask = M_s.masked_fill_(M_s == 0., torch.finfo(dtype).min)
+            h = query.shape[0] // bs
+            # query[:h] = query[h:h*2]
+            # query[h*2:h*3] = query[h*3:]
+            attention_probs_masked = attn.get_attention_scores(query, key, ref_mask)
+            hidden_states_masked = torch.bmm(attention_probs_masked, value)
+            hidden_states_masked = attn.batch_to_head_dim(hidden_states_masked)
+
+            # print(hidden_states_masked.shape)
+            # import sys
+            # sys.exit()
+
+            hidden_states[1:bs//2] = M_t * hidden_states_masked[0] + (1 - M_t) * hidden_states[1:bs//2]
+            hidden_states[bs//2+1:] = M_t * hidden_states_masked[bs//2] + (1 - M_t) * hidden_states[bs//2+1:]
+
+
 
         # linear proj
         hidden_states = attn.to_out[0](hidden_states)
@@ -1038,6 +1065,19 @@ class LocalBlend:
         x_t = x_t[:1] + mask * (x_t - x_t[:1])
         return x_t
 
+    def get_cross_attention_map(self, attention_store, output_size, k=1):
+        maps = attention_store["down_cross"][2:4] + attention_store["up_cross"][:3]
+        maps = [item.reshape(self.alpha_layers.shape[0], -1, 1, 16, 16, self.max_num_words) for item in maps]
+        maps = torch.cat(maps, dim=1)
+        maps = (maps * self.alpha_layers).sum(-1).mean(1)
+        # mask = F.max_pool2d(maps, (k * 2 + 1, k * 2 + 1), (1, 1), padding=(k, k))
+        # mask = F.interpolate(mask, size=output_size)
+        mask = F.interpolate(maps, size=output_size)
+        mask = mask / mask.max(2, keepdims=True)[0].max(3, keepdims=True)[0]
+        mask = mask.gt(0.7)
+        # mask = mask.gt(self.threshold)
+        return mask
+
     def __init__(
         self,
         prompts: List[str],
@@ -1072,6 +1112,27 @@ class AttentionControlEdit(AttentionStore, abc.ABC):
     @abc.abstractmethod
     def replace_cross_attention(self, attn_base, att_replace):
         raise NotImplementedError
+
+    def get_cross_attention_map(self, output_size, is_cross):
+        if is_cross or self.cur_step == 0:
+            return None
+
+        if not (self.num_self_replace[0] <= self.cur_step < self.num_self_replace[1]):
+        # if not (self.num_self_replace[0] <= self.cur_step < 25):
+            return None
+
+        if self.cur_att_layer not in self.layer_ids:
+            return None
+
+        return self.local_blend.get_cross_attention_map(self.attention_store, output_size)
+
+    def between_steps(self):
+        super().between_steps()
+        if self.cur_step != 0:
+            out_dir = "../../home-hot-30/output/diffusers/cross_map"
+            os.makedirs(out_dir, exist_ok=True)
+            cross_attn_map = self.local_blend.get_cross_attention_map(self.attention_store, (64, 64))
+            save_image(cross_attn_map.float(), f"{out_dir}/{self.cur_step}.png")
 
     def forward(self, attn, is_cross: bool, place_in_unet: str):
         if self.cur_att_layer not in self.layer_ids:
@@ -1265,6 +1326,7 @@ def get_time_words_attention_alpha(
 def get_word_inds(text: str, word_place: int, tokenizer):
     split_text = text.split(" ")
     if isinstance(word_place, str):
+        print(word_place, split_text)
         word_place = [i for i, word in enumerate(split_text) if word_place == word]
     elif isinstance(word_place, int):
         word_place = [word_place]
@@ -1280,6 +1342,7 @@ def get_word_inds(text: str, word_place: int, tokenizer):
             if cur_len >= len(split_text[ptr]):
                 ptr += 1
                 cur_len = 0
+    print(f"word_idx: {word_place}, token_idx: {out}")
     return np.array(out)
 
 
